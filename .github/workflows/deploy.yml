@@ -1,0 +1,48 @@
+name: Test and deploy Reflex Lab
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: reflex-lab-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm test
+      - name: Check JavaScript syntax
+        run: |
+          node --check public/app.js
+          node --check src/worker.mjs
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Require deployment configuration
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo 'Configure CLOUDFLARE_API_TOKEN in repository secrets'; exit 1; }
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo 'Configure CLOUDFLARE_ACCOUNT_ID in repository secrets'; exit 1; }
+          if grep -q REPLACE_WITH_YOUR_D1_DATABASE_ID wrangler.toml; then
+            echo 'Set the real D1 database_id in wrangler.toml'; exit 1
+          fi
+      - name: Apply schema migrations
+        run: npx --yes wrangler@4.92.0 d1 migrations apply DB --remote
+      - name: Deploy Worker and static assets
+        run: npx --yes wrangler@4.92.0 deploy
