@@ -11,5 +11,5 @@ run_worker_first = ["/api/*"]
 binding = "DB"
 database_name = "reflex-lab-db"
 # Replace this value with the database_id returned by npm run db:create.
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "42543011-0c8b-4ac7-9468-35e2f8cf7adf"
 migrations_dir = "migrations"
