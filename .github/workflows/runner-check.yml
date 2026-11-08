@@ -1,0 +1,30 @@
+name: Check Windows Runner
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-docker:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 5
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - name: Docker version
+        run: |
+          docker version
+          exit $LASTEXITCODE
+
+      - name: Docker info
+        run: |
+          docker info
+          exit $LASTEXITCODE
+
+      - name: Run hello-world
+        run: |
+          docker run --rm hello-world
+          exit $LASTEXITCODE
