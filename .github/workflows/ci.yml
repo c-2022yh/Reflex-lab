@@ -1,0 +1,58 @@
+name: HW3 Docker CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Serialize Docker CI runs for each branch or PR.
+concurrency:
+  group: docker-ci-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      # There are no external dependencies or package lockfile.
+      - run: npm test
+      - name: Check JavaScript syntax
+        run: |
+          node --check server.mjs
+          node --check public/app.js
+          node --check src/worker.mjs
+
+  docker:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build Docker image
+        run: docker build --tag reflex-lab:ci .
+
+      # Fork PRs can build without access to Docker Hub secrets.
+      - name: Log in to Docker Hub
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Tag and push Docker image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          image="${DOCKERHUB_USERNAME}/reflex-lab"
+          docker tag reflex-lab:ci "${image}:latest"
+          docker tag reflex-lab:ci "${image}:${GITHUB_SHA}"
+          docker push "${image}:${GITHUB_SHA}"
+          docker push "${image}:latest"
