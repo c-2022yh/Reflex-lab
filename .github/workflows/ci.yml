@@ -76,6 +76,10 @@ jobs:
   deploy:
     needs: docker
     runs-on: [self-hosted, Windows, X64]
+    permissions:
+      contents: read
+      actions: read
+      checks: read
     timeout-minutes: 15
     env:
       DOCKER_CONTEXT: desktop-linux
@@ -92,6 +96,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Start independent ranking API monitor
+        id: monitor_start
         run: |
           node scripts/monitor-deployment.mjs start --dir $env:DEPLOY_LOG_DIR --url http://127.0.0.1:3000/api/scores --sha $env:GITHUB_SHA --post-seconds 30
           exit $LASTEXITCODE
@@ -101,23 +106,51 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/deploy-recorded.ps1 -Image "${env:DOCKERHUB_USERNAME}/reflex-lab" -CommitSha $env:GITHUB_SHA -LogDirectory $env:DEPLOY_LOG_DIR
           exit $LASTEXITCODE
       - name: Observe until 30 seconds after deployment or rollback
+        id: monitor_finish
         if: always()
         run: |
           node scripts/monitor-deployment.mjs finish --dir $env:DEPLOY_LOG_DIR --outcome '${{ steps.deployment.outcome }}'
           exit $LASTEXITCODE
       - name: Publish observation summary
+        id: observation
         if: always()
         run: |
           node scripts/monitor-deployment.mjs report --dir $env:DEPLOY_LOG_DIR
           exit $LASTEXITCODE
-      - name: Preserve deployment and observation logs
+      - name: Preserve verified local originals outside the runner workspace
+        id: archive
         if: always()
+        env:
+          DEPLOYMENT_OUTCOME: ${{ steps.deployment.outcome }}
+          MONITOR_START_OUTCOME: ${{ steps.monitor_start.outcome }}
+          MONITOR_FINISH_OUTCOME: ${{ steps.monitor_finish.outcome }}
+          OBSERVATION_OUTCOME: ${{ steps.observation.outcome }}
+        run: |
+          node scripts/archive-deployment.mjs save --dir $env:DEPLOY_LOG_DIR
+          exit $LASTEXITCODE
+      - name: Upload a copy of the preserved logs
+        id: artifact_upload
+        if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: deployment-observation-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ env.DEPLOY_LOG_DIR }}/
+          path: ${{ steps.archive.outputs.path || env.DEPLOY_LOG_DIR }}/
           if-no-files-found: error
           retention-days: 30
+      - name: Report upload outcome and durable fallback path
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_ARCHIVE_PATH: ${{ steps.archive.outputs.path }}
+          ARTIFACT_UPLOAD_OUTCOME: ${{ steps.artifact_upload.outcome }}
+          DEPLOYMENT_OUTCOME: ${{ steps.deployment.outcome }}
+          MONITOR_START_OUTCOME: ${{ steps.monitor_start.outcome }}
+          MONITOR_FINISH_OUTCOME: ${{ steps.monitor_finish.outcome }}
+          OBSERVATION_OUTCOME: ${{ steps.observation.outcome }}
+        run: |
+          node scripts/archive-deployment.mjs status
+          exit $LASTEXITCODE
       - name: Report deployment not started
         if: always() && steps.deployment.outcome == 'skipped'
         run: |

@@ -133,7 +133,8 @@ PowerShell/Actions 문법 검사 통과, A→B 전환 중 health 150회 실패 0
 점수 유지, 전환 후 실패 복구, SHA 불일치 거절, 포트 충돌 시 기존 프로세스 보존,
 관련 없는 컨테이너 보존도 통합 검증에서 통과했습니다.
 기존 test → docker → deploy와 게임·랭킹 저장은 사용자가 GitHub Actions에서 성공을 확인했습니다.
-이번에 추가한 독립 관측 기능의 실제 GitHub Actions 실행은 아직 하지 않았습니다.
+독립 관측 기능은 실제 실행 `42476414464`에서 배포·관측까지 성공했습니다. Artifact 업로드만 storage quota로 실패했습니다.
+아래의 외부 로컬 보관 정책을 추가한 뒤의 새 워크플로는 아직 GitHub Actions에서 실행하지 않았습니다.
 
 ## 실제 재배포의 독립 관측
 
@@ -182,10 +183,36 @@ Summary에는 검증 URL·UTC 시간 범위·배포 전/중/후 요청 수·전�
 | `monitor.stdout.log`, `monitor.stderr.log` | 모니터 진단 출력 |
 | `control-errors.log` (오류 시) | 시작·종료·보고 제어 명령의 예외 |
 
-종료·보고·[Artifact 업로드](https://github.com/actions/upload-artifact)는 `if: always()`로 실행합니다.
-배포/관측 실패 시에도 `deployment-observation-<run_id>-<run_attempt>` Artifact를 30일 보존합니다.
-Runner 연결 자체가 끊기거나 업로드가 실패하면 원격 보존을 보장할 수 없으므로 PC의 `outputs` 파일도 확인하세요.
-다음 checkout이 이전 로컬 로그를 정리할 수 있으니 필요한 결과는 Artifact로 보관하세요.
+종료·보고·로컬 보관·[Artifact 업로드](https://github.com/actions/upload-artifact)는 `if: always()`로 실행합니다.
+**업로드 전에** `archive-deployment.mjs save`가 로그를 작업 폴더 밖에 복사하고 파일별 SHA-256을 대조합니다.
+기본 보관 루트는 Runner 실행 계정의 사용자 폴더 아래 `Reflex-lab-deployment-logs`이며,
+현재 PC에서는 `C:\Users\Ayumi\Reflex-lab-deployment-logs`입니다.
+각 실행은 `<저장소>/run-<run_id>-attempt-<attempt>/<UTC시각>-<고유ID>/`에 별도 저장하고 이전 사본을 덮어쓰거나 삭제하지 않습니다.
+`REFLEX_DEPLOY_ARCHIVE_ROOT`로 루트를 변경할 수 있지만 checkout/source 및 Runner `_work` 내부 경로는 거절합니다.
+정확한 보관 경로는 로그와 Summary에 표시합니다. `outputs`와 `_work/_temp`는 장기 보관 위치가 아닙니다.
+
+Artifact에는 이 외부 사본을 업로드합니다. 원격 업로드가 성공한 경우 보존 기간은 30일이며,
+업로드가 실패해도 외부 로컬 원본은 남습니다. 자동 보관 폴더에는 정리/삭제 기능이 없습니다.
+업로드 단계에만 `continue-on-error: true`를 적용합니다. `steps.artifact_upload.outcome`의 원래 실패 상태는 별도로 기록합니다.
+배포·모니터링·로컬 원본 보관 단계에는 오류 무시를 적용하지 않습니다.
+
+| 결과 | 작업 처리 |
+|---|---|
+| 배포/관측 성공, 로컬 검증 사본 있음, Artifact 업로드만 실패 | 업로드 경고와 실제 원인·대체 경로를 Summary에 표시 |
+| 배포 또는 모니터링 실패 | 작업 실패 유지, 가능한 로그는 계속 보관 |
+| 로컬 사본 없음·원본 없음·복사 중 파일 변경 | 증거 보관 실패로 작업 실패 유지 |
+
+업로드 후 `archive-deployment.mjs status`가 배포/모니터/업로드 결과를 구분합니다.
+업로드 실패의 정확한 원인은 현재 실행의 GitHub check-run 오류 annotation에서 읽습니다.
+이 읽기 작업에만 deploy job의 `actions: read`, `checks: read` 권한과 기본 `github.token`을 사용하며 추가 Secrets는 필요 없습니다.
+권한 오류나 annotation 반영 지연으로 원문을 읽지 못하면 그 사실과 업로드 로그 링크를 표시하고, quota 오류라고 추정하지 않습니다.
+토큰은 로컬 보관 파일에 쓰지 않습니다.
+
+외부 폴더에는 `deployment-observation/` 원본 전체와 `archive-manifest.json`, `retained-summary.md`,
+`artifact-upload-status.json`, `preservation-summary.md`, `combined-summary.md`를 남깁니다.
+관측 Summary는 원문을 보관하고 배포 Summary를 transcript에서 복원할 때는 복원본임을 표시합니다.
+Runner/디스크 자체가 사용할 수 없으면 복사나 원격 업로드를 보장할 수 없습니다.
+기존 GitHub Artifacts를 삭제하거나 유료/결제 설정을 변경하지 않습니다.
 로그는 실제 랭킹 응답(닉네임 포함)을 담습니다. Docker Hub 로그인은 배포 transcript 밖에서 처리합니다.
 
 전체 로컬 관측 검증은 다음과 같이 실행합니다. 최초 배포/정상 재배포/실패 복구/잘못된 SHA 각각에 종료 후 30초 관측을 적용하므로 수 분이 걸립니다.
@@ -202,7 +229,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/test-deploy-window
 마지막 요청 완료는 배포 종료 후 30.285초였고 최대 완료 기록 공백은 1.102초였습니다.
 실패 주입에서는 503 응답 6건을 기록한 뒤 기존 SHA로 복구되었으며, 복구 종료 후 30초 경계 이후까지 관측·로그를 유지했습니다.
 잘못된 JSON·필수 필드 누락·타임아웃·관측 로그 중단 및 편차 표시도 테스트했습니다.
-이 결과는 로컬 fixture 검증이며 이번 변경의 실제 Actions 실행/Artifact 업로드 결과는 아닙니다.
+이 결과는 로컬 fixture 검증이며 실제 3000 포트 실행 결과와 구분합니다.
+
+### quota 오류가 발생한 실제 실행 보존
+
+- 실제 실행: [42476414464 / attempt 1](https://github.com/c-2022yh/Reflex-lab/actions/runs/42476414464), SHA `17fc489a35d4dcd27d786a0e136fe2fb8c30e733`.
+- 실제 `http://127.0.0.1:3000/api/scores`: 47건 성공, 0건 실패, 마지막 응답은 배포 종료 후 30.440초. 이전 형식 응답 14건의 SHA는 미확인으로 그대로 남깁니다.
+- 실물 보관: `C:\Users\Ayumi\Reflex-lab-deployment-logs\c-2022yh-Reflex-lab\run-42476414464-attempt-1\recovered-original`.
+- 원본 랭킹/배포 로그, 원본 모니터 Summary, GitHub의 마스킹된 test/docker/deploy 전체 로그, 업로드 quota 오류, 통합 `combined-summary.md`를 보존했습니다. Runner `_temp`의 배포 Summary 파일은 이미 정리되어 작업 로그에서 복원했다고 표시했습니다.
+- 의도적 **로컬 13001 포트** 실패 주입은 별도 `C:\Users\Ayumi\Reflex-lab-deployment-logs\local-tests-port-13001\reflex-test-cd541d9f\failure-case`에 보존했습니다. 이 테스트의 503 실패 6건은 실제 3000 포트의 장애가 아닙니다.
+- 보관 루트의 `INDEX.md`에서 두 종류의 증거를 구분합니다.
 
 GitHub에 반영한 뒤 추가 확인:
 
