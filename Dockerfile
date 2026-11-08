@@ -1,7 +1,9 @@
 FROM node:24-bookworm-slim
 
 WORKDIR /app
+ARG COMMIT_SHA=local
 ENV NODE_ENV=production \
+    COMMIT_SHA=${COMMIT_SHA} \
     HOST=0.0.0.0 \
     PORT=3000 \
     DB_PATH=/data/reflex.sqlite

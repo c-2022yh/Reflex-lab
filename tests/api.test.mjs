@@ -7,6 +7,15 @@ const request=(path,body,method=body?'POST':'GET',headers={})=>new Request(origi
 async function eligibleSession(db,age=15000){const token=crypto.randomUUID();await db.prepare('INSERT INTO sessions VALUES (?,?)').bind(token,Date.now()-age).run();return token;}
 const record=token=>({nickname:'Player_01',token,samples:[200,210,230,190,220],average:1});
 
+test('health reports the supplied image SHA and keeps the Cloudflare response unchanged',async()=>{
+ const db=openDatabase(':memory:');try{
+ const commitSha='a'.repeat(40);
+ assert.deepEqual(await(await handleApi(request('/api/health'),db,{commitSha})).json(),{ok:true,version:'1.0.0',commitSha});
+ assert.deepEqual(await(await handleApi(request('/api/health'),db)).json(),{ok:true,version:'1.0.0'});
+ assert.equal((await handleApi(request('/api/health'),null,{commitSha})).status,503);
+ }finally{db.close();}
+});
+
 test('computes average and fastest; rejects malformed and injected names',()=>{
  const valid=record(crypto.randomUUID()); assert.equal(validateScore(valid).average,210);assert.equal(validateScore(valid).fastest,190);
  for(const v of [null,{}, {...valid,nickname:'<script>'},{...valid,samples:[100]},{...valid,samples:[0,200,200,200,200]},{...valid,samples:[5001,200,200,200,200]},{...valid,samples:[200.5,200,200,200,200]},{...valid,samples:['200',200,200,200,200]},{...valid,token:'bad'}])assert.equal(validateScore(v),null);

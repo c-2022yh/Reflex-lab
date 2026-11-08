@@ -22,7 +22,7 @@ const server = createServer(async (req, res) => {
       }
       const body = Buffer.concat(chunks);
       const request = new Request(url, { method:req.method, headers:req.headers, ...(['GET','HEAD'].includes(req.method) ? {} : { body }) });
-      const response = await handleApi(request, db);
+      const response = await handleApi(request, db, { commitSha: process.env.COMMIT_SHA || 'local' });
       res.writeHead(response.status, Object.fromEntries(response.headers));
       res.end(Buffer.from(await response.arrayBuffer())); return;
     }

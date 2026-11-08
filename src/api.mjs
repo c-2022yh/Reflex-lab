@@ -8,7 +8,7 @@ export function validateScore(value) {
 }
 const json = (data, status = 200) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
 
-export async function handleApi(request, db) {
+export async function handleApi(request, db, { commitSha } = {}) {
   const path = new URL(request.url).pathname;
   if (!['/api/sessions', '/api/scores', '/api/health'].includes(path)) return json({ error: '찾을 수 없는 API입니다.' }, 404);
   if ((path === '/api/sessions' && request.method !== 'POST') || (path === '/api/health' && request.method !== 'GET') || (path === '/api/scores' && !['GET','POST'].includes(request.method))) return json({ error: '지원하지 않는 요청 방식입니다.' }, 405);
@@ -17,7 +17,7 @@ export async function handleApi(request, db) {
     if (!db) return json({ error: '저장소를 연결하지 못했어요.' }, 503);
     if (path === '/api/health') {
       await db.prepare('SELECT 1 AS ok').first();
-      return json({ ok: true, version: '1.0.0' });
+      return json({ ok: true, version: '1.0.0', ...(commitSha ? { commitSha } : {}) });
     }
     if (path === '/api/sessions') {
       const token = crypto.randomUUID();
