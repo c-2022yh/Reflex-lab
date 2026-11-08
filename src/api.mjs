@@ -33,7 +33,7 @@ export async function handleApi(request, db, { commitSha } = {}) {
         db.prepare('SELECT id, nickname, average, fastest, created_at AS createdAt FROM scores ORDER BY average ASC, created_at ASC, id ASC LIMIT 10'),
         db.prepare('SELECT COUNT(*) AS total, MIN(average) AS best FROM scores'),
       ]);
-      return json({ scores: results[0].results, ...results[1].results[0] });
+      return json({ scores: results[0].results, ...results[1].results[0], ...(commitSha ? { commitSha } : {}) });
     }
     let raw;
     try {

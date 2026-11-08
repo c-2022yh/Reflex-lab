@@ -3,6 +3,7 @@ const $ = id => document.getElementById(id);
 const icon = name => `<svg class="icon" aria-hidden="true"><use href="#${name}"/></svg>`;
 let phase = 'idle', samples = [], token = '', nickname = '', timer = null, frame = null, signalAt = 0, starting = false, saving = false, savedId = '', savedRank = null, boardLoading = false;
 const average = () => samples.length ? Math.round(samples.reduce((a,b)=>a+b,0)/samples.length) : null;
+const reactionRange = () => samples.length === 5 ? Math.max(...samples) - Math.min(...samples) : null;
 const clearTimer = () => { clearTimeout(timer); cancelAnimationFrame(frame); };
 function showError(message = '', retry = false) {
   $('error').replaceChildren(); $('error').hidden = !message;
@@ -26,7 +27,7 @@ function render() {
     early:'<div class="early-symbol">!</div><h3>조금 빨랐어요.</h3><p>초록 신호가 켜진 뒤에 눌러주세요.</p><span class="action-hint">클릭해서 이번 회차 다시 도전 →</span>',
     paused:icon('clock')+'<h3>잠깐 쉬었나요?</h3><p>화면을 벗어났거나 측정 시간이 초과됐어요.</p><span class="action-hint">클릭해서 이번 회차 다시 측정 →</span>',
     result:`<div class="result-eyebrow">ROUND ${samples.length} COMPLETE</div><div class="big-result">${samples.at(-1)}<span>ms</span></div><p>기록했어요. 다음 신호를 준비하세요.</p><span class="action-hint">클릭해서 다음 회차 →</span>`,
-    done:`<div class="result-eyebrow">YOUR AVERAGE REACTION TIME</div><div class="big-result">${average()}<span>ms</span></div><p>다섯 번의 반응, 하나의 기록.</p><span class="saved-status">${saving?'랭킹에 기록을 저장하는 중…':savedId?`저장 완료 · 전체 ${savedRank}위`:'아래에서 기록 저장을 다시 시도해 주세요.'}</span>`,
+    done:`<div class="result-eyebrow">YOUR AVERAGE REACTION TIME</div><div class="big-result">${average()}<span>ms</span></div><p>다섯 번의 반응, 하나의 기록.</p><div class="reaction-range">반응시간 편차 <strong>${reactionRange()} ms</strong><small>5회 중 최댓값 − 최솟값 · 작을수록 이번 도전의 반응이 일정했어요.</small></div><span class="saved-status">${saving?'랭킹에 기록을 저장하는 중…':savedId?`저장 완료 · 전체 ${savedRank}위`:'아래에서 기록 저장을 다시 시도해 주세요.'}</span>`,
   };
   $('play-area').innerHTML = panels[phase] || '';
   $('play-area').setAttribute('aria-label', phase==='go'?'지금 누르세요':phase==='waiting'?'초록 신호를 기다리세요':phase==='done'?'측정 완료':'다음 측정');

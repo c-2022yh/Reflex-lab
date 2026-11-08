@@ -1,6 +1,6 @@
 # Docker integration test. Uses an isolated stack, volume and loopback port.
 [CmdletBinding()]
-param([ValidateRange(1024, 65535)][int]$Port = 13001)
+param([ValidateRange(1024, 65535)][int]$Port = 13001, [switch]$Observe)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $name = 'reflex-test-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
@@ -15,6 +15,8 @@ $shaMismatch = 'd' * 40
 $tempDir = Join-Path ([IO.Path]::GetTempPath()) $name
 $oldSummary = $env:GITHUB_STEP_SUMMARY
 $monitor = $null
+$observationRoot = Join-Path $root "outputs/$name"
+$observationAttempt = 0
 
 function Invoke-TestDocker {
     param([string[]]$DockerArgs)
@@ -23,7 +25,28 @@ function Invoke-TestDocker {
 }
 function Deploy {
     param([string]$Sha)
-    & (Join-Path $PSScriptRoot 'deploy-windows.ps1') -Image $image -CommitSha $Sha -DeploymentName $name -DataVolume $volume -Port $Port -SkipPull -HealthAttempts 5
+    if (!$Observe) {
+        & (Join-Path $PSScriptRoot 'deploy-windows.ps1') -Image $image -CommitSha $Sha -DeploymentName $name -DataVolume $volume -Port $Port -SkipPull -HealthAttempts 5
+        return
+    }
+    $script:observationAttempt++
+    $logs = Join-Path $observationRoot "$script:observationAttempt-$Sha"
+    $observer = Join-Path $PSScriptRoot 'monitor-deployment.mjs'
+    & node $observer start --dir $logs --url "$url/api/scores" --sha $Sha --deployment-name $name --post-seconds 30
+    if ($LASTEXITCODE -ne 0) { throw 'Observer did not start.' }
+    $deploymentExit = 1
+    try {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'deploy-recorded.ps1') -Image $image -CommitSha $Sha -DeploymentName $name -DataVolume $volume -Port $Port -SkipPull -HealthAttempts 5 -LogDirectory $logs
+        $deploymentExit = $LASTEXITCODE
+    } finally {
+        & node $observer finish --dir $logs --outcome $(if ($deploymentExit -eq 0) { 'success' } else { 'failure' })
+        $finishExit = $LASTEXITCODE
+        & node $observer report --dir $logs
+        $reportExit = $LASTEXITCODE
+        Write-Host "Observation files retained at $logs"
+    }
+    if ($deploymentExit -ne 0) { throw 'Expected deployment failure; observation logs and summary retained.' }
+    if ($finishExit -ne 0 -or $reportExit -ne 0) { throw 'Deployment succeeded but observation failed.' }
 }
 function Assert-Board {
     $board = Invoke-RestMethod "$url/api/scores"
@@ -52,7 +75,7 @@ try {
     $needle = 'const server = createServer(async (req, res) => {'
     if (!$server.Contains($needle)) { throw 'Cannot create the injected failure fixture.' }
     $server = $server.Replace($needle, ($needle + "`n" + @'
-  if (req.url === '/api/health' && req.headers['x-reflex-entrypoint'] === 'gateway') {
+  if (['/api/health', '/api/scores'].includes(req.url) && req.headers['x-reflex-entrypoint'] === 'gateway') {
     res.writeHead(503); res.end('test-only post-switch failure'); return;
   }
 '@))
@@ -128,6 +151,18 @@ db.close();
         if (!$blocked -or !$listener.Server.IsBound) { throw 'Port conflict protection failed.' }
     } finally { $listener.Stop() }
     Assert-Board
+    if ($Observe) {
+        foreach ($case in @( "1-$shaA", "2-$shaB", "3-$shaBad", "4-$shaMismatch" )) {
+            $caseDirectory = Join-Path $observationRoot $case
+            $report = Get-Content -Raw -Encoding UTF8 (Join-Path $caseDirectory 'report.json') | ConvertFrom-Json
+            if ($report.lastResponsePostMs -lt 30000 -or $report.postObservationMs -lt 30000) { throw "Post-window request coverage failed: $case" }
+            if (!(Test-Path -LiteralPath (Join-Path $caseDirectory 'deployment.log'))) { throw "Deployment log missing: $case" }
+        }
+        $normal = Get-Content -Raw -Encoding UTF8 (Join-Path $observationRoot "2-$shaB/report.json") | ConvertFrom-Json
+        $failed = Get-Content -Raw -Encoding UTF8 (Join-Path $observationRoot "3-$shaBad/report.json") | ConvertFrom-Json
+        if ($normal.failed -ne 0 -or $normal.beforeScoresSha -ne $shaA -or $normal.afterScoresSha -ne $shaB -or $normal.minIdleMs -lt 1000) { throw 'Normal deployment observation failed.' }
+        if ($failed.failed -lt 1 -or $failed.deploymentOutcome -ne 'failure' -or $failed.afterScoresSha -ne $shaB) { throw 'Failed deployment observation or rollback evidence missing.' }
+    }
     Write-Host 'PASS: initial deploy, blue/green switch, 150 continuity probes, score persistence, post-switch rollback, SHA rejection, port conflict, unrelated container protection.'
 } finally {
     if ($monitor) { Stop-Job $monitor; Remove-Job $monitor }

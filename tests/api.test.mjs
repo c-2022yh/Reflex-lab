@@ -13,6 +13,7 @@ test('health reports the supplied image SHA and keeps the Cloudflare response un
  assert.deepEqual(await(await handleApi(request('/api/health'),db,{commitSha})).json(),{ok:true,version:'1.0.0',commitSha});
  assert.deepEqual(await(await handleApi(request('/api/health'),db)).json(),{ok:true,version:'1.0.0'});
  assert.equal((await handleApi(request('/api/health'),null,{commitSha})).status,503);
+ assert.deepEqual(await(await handleApi(request('/api/scores'),db,{commitSha})).json(),{scores:[],total:0,best:null,commitSha});
  }finally{db.close();}
 });
 
